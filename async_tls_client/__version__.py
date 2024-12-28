@@ -6,6 +6,6 @@
 
 __title__ = "async_tls_client"
 __description__ = "Fork of tls-client with asyncio."
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __author__ = "Diprog"
 __license__ = "MIT"
