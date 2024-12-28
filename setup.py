@@ -7,14 +7,14 @@ import os
 
 
 data_files = []
-directories = glob.glob('tls_client/dependencies/')
+directories = glob.glob('async_tls_client/dependencies/')
 for directory in directories:
     files = glob.glob(directory+'*')
-    data_files.append(('tls_client/dependencies', files))
+    data_files.append(('async_tls_client/dependencies', files))
 
 about = {}
 here = os.path.abspath(os.path.dirname(__file__))
-with open(os.path.join(here, "tls_client", "__version__.py"), "r", "utf-8") as f:
+with open(os.path.join(here, "async_tls_client", "__version__.py"), "r", "utf-8") as f:
     exec(f.read(), about)
 
 with open("README.md", "r", "utf-8") as f:
@@ -53,6 +53,6 @@ setup(
         "Topic :: Software Development :: Libraries",
     ],
     project_urls={
-        "Source": "https://github.com/FlorianREGAZ/Python-Tls-Client",
+        "Source": "https://github.com/diprog/python-tls-client-async",
     }
 )
