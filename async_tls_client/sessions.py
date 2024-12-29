@@ -16,6 +16,29 @@ import asyncio
 
 
 class AsyncSession:
+    """
+    Asynchronous session to perform HTTP requests with special TLS settings and session management.
+
+    This class provides an asynchronous session that uses a Go-based TLS client under the hood.
+    It supports setting client identifiers, custom JA3 strings, HTTP/2 settings, certificate pinning,
+    custom proxy usage, and more. Each session is tracked by a unique session ID, so destroying or closing
+    the session frees its underlying resources.
+
+    The session includes:
+    - Standard HTTP settings (headers, proxies, cookies, etc.)
+    - Advanced TLS settings (client identifiers, JA3, HTTP/2 h2_settings, supported signature algorithms, etc.)
+    - HTTP/2 custom frames and priorities
+    - Custom extension order and forced HTTP/1 usage if necessary
+    - Debugging and panic catching (Go-based)
+
+    Examples:
+        Example usage::
+
+            async with AsyncSession(client_identifier="chrome_120") as session:
+                response = await session.get("https://example.com")
+                print(response.status_code, response.text)
+
+    """
 
     def __init__(
         self,
@@ -34,16 +57,186 @@ class AsyncSession:
         priority_frames: Optional[list] = None,
         header_order: Optional[List[str]] = None,
         header_priority: Optional[List[str]] = None,
-        random_tls_extension_order: Optional = False,
-        force_http1: Optional = False,
-        catch_panics: Optional = False,
-        debug: Optional = False,
+        random_tls_extension_order: Optional[bool] = False,
+        force_http1: Optional[bool] = False,
+        catch_panics: Optional[bool] = False,
+        debug: Optional[bool] = False,
         certificate_pinning: Optional[Dict[str, List[str]]] = None,
     ) -> None:
-        self._session_id = str(uuid.uuid4())
-        # --- Standard Settings ----------------------------------------------------------------------------------------
+        """
+        Initializes the AsyncSession with various HTTP and TLS parameters.
 
-        # Case-insensitive dictionary of headers, send on each request
+        Google style docstring format:
+
+        Args:
+            client_identifier (ClientIdentifiers):
+                Identifies the client. For example, "chrome_103", "firefox_102", "opera_89", etc.
+                For all possible client identifiers, check the settings.py file. Defaults to "chrome_120".
+
+            ja3_string (Optional[str]):
+                A JA3 string specifying TLS fingerprint details such as
+                TLSVersion, Ciphers, Extensions, EllipticCurves, EllipticCurvePointFormats.
+                Example:
+                    771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,
+                    0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0
+
+            h2_settings (Optional[Dict[str, int]]):
+                A dictionary representing HTTP/2 header frame settings.
+                Possible keys: HEADER_TABLE_SIZE, SETTINGS_ENABLE_PUSH, MAX_CONCURRENT_STREAMS,
+                INITIAL_WINDOW_SIZE, MAX_FRAME_SIZE, MAX_HEADER_LIST_SIZE.
+                Example:
+                    {
+                        "HEADER_TABLE_SIZE": 65536,
+                        "MAX_CONCURRENT_STREAMS": 1000,
+                        "INITIAL_WINDOW_SIZE": 6291456,
+                        "MAX_HEADER_LIST_SIZE": 262144
+                    }
+
+            h2_settings_order (Optional[List[str]]):
+                A list specifying the order of HTTP/2 settings.
+                Example:
+                    [
+                        "HEADER_TABLE_SIZE",
+                        "MAX_CONCURRENT_STREAMS",
+                        "INITIAL_WINDOW_SIZE",
+                        "MAX_HEADER_LIST_SIZE"
+                    ]
+
+            supported_signature_algorithms (Optional[List[str]]):
+                A list of supported signature algorithms.
+                Possible values:
+                    PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512, PSSWithSHA256, PSSWithSHA384,
+                    PSSWithSHA512, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512,
+                    PKCS1WithSHA1, ECDSAWithSHA1
+                Example:
+                    [
+                        "ECDSAWithP256AndSHA256",
+                        "PSSWithSHA256",
+                        "PKCS1WithSHA256",
+                        "ECDSAWithP384AndSHA384",
+                        "PSSWithSHA384",
+                        "PKCS1WithSHA384",
+                        "PSSWithSHA512",
+                        "PKCS1WithSHA512",
+                    ]
+
+            supported_delegated_credentials_algorithms (Optional[List[str]]):
+                A list of supported delegated credentials algorithms.
+                Possible values:
+                    PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512, PSSWithSHA256, PSSWithSHA384,
+                    PSSWithSHA512, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512,
+                    PKCS1WithSHA1, ECDSAWithSHA1
+                Example:
+                    [
+                        "ECDSAWithP256AndSHA256",
+                        "PSSWithSHA256",
+                        "PKCS1WithSHA256",
+                        "ECDSAWithP384AndSHA384",
+                        "PSSWithSHA384",
+                        "PKCS1WithSHA384",
+                        "PSSWithSHA512",
+                        "PKCS1WithSHA512",
+                    ]
+
+            supported_versions (Optional[List[str]]):
+                A list of supported TLS versions. Possible values include:
+                GREASE, 1.3, 1.2, 1.1, 1.0
+                Example:
+                    [
+                        "GREASE",
+                        "1.3",
+                        "1.2"
+                    ]
+
+            key_share_curves (Optional[List[str]]):
+                A list of key share curves. Possible values:
+                GREASE, P256, P384, P521, X25519
+                Example:
+                    [
+                        "GREASE",
+                        "X25519"
+                    ]
+
+            cert_compression_algo (str):
+                Certificate compression algorithm. Examples include: "zlib", "brotli", "zstd".
+
+            additional_decode (str):
+                Make sure the Go code decodes the response body once explicitly by the provided algorithm.
+                Examples include: "gzip", "br", "deflate", or None.
+
+            pseudo_header_order (Optional[List[str]]):
+                A list specifying the pseudo-header order (:authority, :method, :path, :scheme).
+                Example:
+                    [
+                        ":method",
+                        ":authority",
+                        ":scheme",
+                        ":path"
+                    ]
+
+            connection_flow (Optional[int]):
+                Connection flow or window size increment. Example:
+                    15663105
+
+            priority_frames (Optional[list]):
+                A list specifying HTTP/2 priority frames.
+                Example:
+                    [
+                      {
+                        "streamID": 3,
+                        "priorityParam": {
+                          "weight": 201,
+                          "streamDep": 0,
+                          "exclusive": false
+                        }
+                      },
+                      {
+                        "streamID": 5,
+                        "priorityParam": {
+                          "weight": 101,
+                          "streamDep": false,
+                          "exclusive": 0
+                        }
+                      }
+                    ]
+
+            header_order (Optional[List[str]]):
+                A list specifying the order of your headers.
+                Example:
+                    [
+                        "key1",
+                        "key2"
+                    ]
+
+            header_priority (Optional[List[str]]):
+                A list or dictionary specifying header priority.
+                Example:
+                    {
+                        "streamDep": 1,
+                        "exclusive": true,
+                        "weight": 1
+                    }
+
+            random_tls_extension_order (Optional[bool]):
+                Whether to randomize the TLS extension order.
+
+            force_http1 (Optional[bool]):
+                Whether to force HTTP/1 usage instead of HTTP/2 or higher.
+
+            catch_panics (Optional[bool]):
+                Whether to avoid the TLS client printing the whole stacktrace when a panic (critical Go error) happens.
+
+            debug (Optional[bool]):
+                Enables debug mode, which may provide additional output.
+
+            certificate_pinning (Optional[Dict[str, List[str]]]):
+                Dictionary specifying certificate pinning. Useful for verifying certain hosts with pinned certificates.
+
+        Returns:
+            None
+        """
+        self._session_id = str(uuid.uuid4())
+        # Standard Settings
         self.headers = CaseInsensitiveDict(
             {
                 "User-Agent": f"tls-client/{__version__}",
@@ -52,259 +245,66 @@ class AsyncSession:
                 "Connection": "keep-alive",
             }
         )
-
-        # Example:
-        # {
-        #     "http": "http://user:pass@ip:port",
-        #     "https": "http://user:pass@ip:port"
-        # }
         self.proxies = {}
-
-        # Dictionary of querystring data to attach to each request. The dictionary values may be lists for representing
-        # multivalued query parameters.
         self.params = {}
-
-        # CookieJar containing all currently outstanding cookies set on this session
         self.cookies = cookiejar_from_dict({})
-
-        # Timeout
         self.timeout_seconds = 30
-
-        # Certificate pinning
         self.certificate_pinning = certificate_pinning
 
-        # --- Advanced Settings ----------------------------------------------------------------------------------------
-
-        # Examples:
-        # Chrome --> chrome_103, chrome_104, chrome_105, chrome_106
-        # Firefox --> firefox_102, firefox_104
-        # Opera --> opera_89, opera_90
-        # Safari --> safari_15_3, safari_15_6_1, safari_16_0
-        # iOS --> safari_ios_15_5, safari_ios_15_6, safari_ios_16_0
-        # iPadOS --> safari_ios_15_6
-        #
-        # for all possible client identifiers, check out the settings.py
+        # Advanced Settings
         self.client_identifier = client_identifier
-
-        # Set JA3 --> TLSVersion, Ciphers, Extensions, EllipticCurves, EllipticCurvePointFormats
-        # Example:
-        # 771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0
         self.ja3_string = ja3_string
-
-        # HTTP2 Header Frame Settings
-        # Possible Settings:
-        # HEADER_TABLE_SIZE
-        # SETTINGS_ENABLE_PUSH
-        # MAX_CONCURRENT_STREAMS
-        # INITIAL_WINDOW_SIZE
-        # MAX_FRAME_SIZE
-        # MAX_HEADER_LIST_SIZE
-        #
-        # Example:
-        # {
-        #     "HEADER_TABLE_SIZE": 65536,
-        #     "MAX_CONCURRENT_STREAMS": 1000,
-        #     "INITIAL_WINDOW_SIZE": 6291456,
-        #     "MAX_HEADER_LIST_SIZE": 262144
-        # }
         self.h2_settings = h2_settings
-
-        # HTTP2 Header Frame Settings Order
-        # Example:
-        # [
-        #     "HEADER_TABLE_SIZE",
-        #     "MAX_CONCURRENT_STREAMS",
-        #     "INITIAL_WINDOW_SIZE",
-        #     "MAX_HEADER_LIST_SIZE"
-        # ]
         self.h2_settings_order = h2_settings_order
-
-        # Supported Signature Algorithms
-        # Possible Settings:
-        # PKCS1WithSHA256
-        # PKCS1WithSHA384
-        # PKCS1WithSHA512
-        # PSSWithSHA256
-        # PSSWithSHA384
-        # PSSWithSHA512
-        # ECDSAWithP256AndSHA256
-        # ECDSAWithP384AndSHA384
-        # ECDSAWithP521AndSHA512
-        # PKCS1WithSHA1
-        # ECDSAWithSHA1
-        #
-        # Example:
-        # [
-        #     "ECDSAWithP256AndSHA256",
-        #     "PSSWithSHA256",
-        #     "PKCS1WithSHA256",
-        #     "ECDSAWithP384AndSHA384",
-        #     "PSSWithSHA384",
-        #     "PKCS1WithSHA384",
-        #     "PSSWithSHA512",
-        #     "PKCS1WithSHA512",
-        # ]
         self.supported_signature_algorithms = supported_signature_algorithms
-
-        # Supported Delegated Credentials Algorithms
-        # Possible Settings:
-        # PKCS1WithSHA256
-        # PKCS1WithSHA384
-        # PKCS1WithSHA512
-        # PSSWithSHA256
-        # PSSWithSHA384
-        # PSSWithSHA512
-        # ECDSAWithP256AndSHA256
-        # ECDSAWithP384AndSHA384
-        # ECDSAWithP521AndSHA512
-        # PKCS1WithSHA1
-        # ECDSAWithSHA1
-        #
-        # Example:
-        # [
-        #     "ECDSAWithP256AndSHA256",
-        #     "PSSWithSHA256",
-        #     "PKCS1WithSHA256",
-        #     "ECDSAWithP384AndSHA384",
-        #     "PSSWithSHA384",
-        #     "PKCS1WithSHA384",
-        #     "PSSWithSHA512",
-        #     "PKCS1WithSHA512",
-        # ]
         self.supported_delegated_credentials_algorithms = supported_delegated_credentials_algorithms
-
-        # Supported Versions
-        # Possible Settings:
-        # GREASE
-        # 1.3
-        # 1.2
-        # 1.1
-        # 1.0
-        #
-        # Example:
-        # [
-        #     "GREASE",
-        #     "1.3",
-        #     "1.2"
-        # ]
         self.supported_versions = supported_versions
-
-        # Key Share Curves
-        # Possible Settings:
-        # GREASE
-        # P256
-        # P384
-        # P521
-        # X25519
-        #
-        # Example:
-        # [
-        #     "GREASE",
-        #     "X25519"
-        # ]
         self.key_share_curves = key_share_curves
-
-        # Cert Compression Algorithm
-        # Examples: "zlib", "brotli", "zstd"
         self.cert_compression_algo = cert_compression_algo
-
-        # Additional Decode
-        # Make sure the go code decodes the response body once explicit by provided algorithm.
-        # Examples: null, "gzip", "br", "deflate"
         self.additional_decode = additional_decode
-
-        # Pseudo Header Order (:authority, :method, :path, :scheme)
-        # Example:
-        # [
-        #     ":method",
-        #     ":authority",
-        #     ":scheme",
-        #     ":path"
-        # ]
         self.pseudo_header_order = pseudo_header_order
-
-        # Connection Flow / Window Size Increment
-        # Example:
-        # 15663105
         self.connection_flow = connection_flow
-
-        # Example:
-        # [
-        #   {
-        #     "streamID": 3,
-        #     "priorityParam": {
-        #       "weight": 201,
-        #       "streamDep": 0,
-        #       "exclusive": false
-        #     }
-        #   },
-        #   {
-        #     "streamID": 5,
-        #     "priorityParam": {
-        #       "weight": 101,
-        #       "streamDep": false,
-        #       "exclusive": 0
-        #     }
-        #   }
-        # ]
         self.priority_frames = priority_frames
-
-        # Order of your headers
-        # Example:
-        # [
-        #   "key1",
-        #   "key2"
-        # ]
         self.header_order = header_order
-
-        # Header Priority
-        # Example:
-        # {
-        #   "streamDep": 1,
-        #   "exclusive": true,
-        #   "weight": 1
-        # }
         self.header_priority = header_priority
-
-        # randomize tls extension order
         self.random_tls_extension_order = random_tls_extension_order
-
-        # force HTTP1
         self.force_http1 = force_http1
-
-        # catch panics
-        # avoid the tls client to print the whole stacktrace when a panic (critical go error) happens
         self.catch_panics = catch_panics
-
-        # debugging
         self.debug = debug
 
-    def __enter__(self):
-        return self
-
     async def __aenter__(self):
-        return self
+        """
+        Enters the session in an asynchronous context manager.
 
-    def __exit__(self, *args):
-        self.close()
+        Returns:
+            AsyncSession: The current session instance.
+        """
+        return self
 
     async def __aexit__(self, *args):
+        """
+        Exits the session in an asynchronous context manager.
+
+        Frees resources by calling the `close()` method asynchronously.
+        """
         await self.close()
 
     async def close(self) -> str:
+        """
+        Closes the session and frees allocated Go memory resources.
+
+        Returns:
+            str: The JSON response string from the destroy session call.
+        """
         destroy_session_payload = {
             "sessionId": self._session_id
         }
 
-        # Wrap the synchronous destroySession call in a thread
         destroy_session_response = await asyncio.to_thread(
             destroySession, dumps(destroy_session_payload).encode('utf-8')
         )
-        # we dereference the pointer to a byte array
         destroy_session_response_bytes = ctypes.string_at(destroy_session_response)
-        # convert our byte array to a string (tls client returns json)
         destroy_session_response_string = destroy_session_response_bytes.decode('utf-8')
-        # convert response string to json
         destroy_session_response_object = loads(destroy_session_response_string)
 
         await asyncio.to_thread(
@@ -317,26 +317,61 @@ class AsyncSession:
         self,
         method: str,
         url: str,
-        params: Optional[dict] = None,  # Optional[dict[str, str]]
+        params: Optional[dict] = None,
         data: Optional[Union[str, dict]] = None,
-        headers: Optional[dict] = None,  # Optional[dict[str, str]]
-        cookies: Optional[dict] = None,  # Optional[dict[str, str]]
-        json: Optional[dict] = None,  # Optional[dict]
+        headers: Optional[dict] = None,
+        cookies: Optional[dict] = None,
+        json: Optional[dict] = None,
         allow_redirects: Optional[bool] = False,
         insecure_skip_verify: Optional[bool] = False,
         timeout_seconds: Optional[int] = None,
-        proxy: Optional[dict] = None  # Optional[dict[str, str]]
+        proxy: Optional[dict] = None
     ) -> Response:
+        """
+        Executes an HTTP request using the Go-based TLS client in a separate thread.
+
+        Args:
+            method (str):
+                The HTTP method (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD).
+            url (str):
+                The request URL.
+            params (Optional[dict]):
+                Querystring parameters to be appended to the URL.
+                If values are lists, they represent multiple values for the same key.
+            data (Optional[Union[str, dict]]):
+                The request body for form data or raw string/bytes. Priority is given to `data` over `json`.
+            headers (Optional[dict]):
+                Additional headers to merge with the session's default headers.
+            cookies (Optional[dict]):
+                Cookies to merge with the session's cookies.
+            json (Optional[dict]):
+                JSON body if `data` is not provided. If it's a dict or list, it will be JSON-encoded automatically.
+            allow_redirects (Optional[bool]):
+                Whether to follow redirects. Defaults to False.
+            insecure_skip_verify (Optional[bool]):
+                Whether to skip TLS certificate verification. Defaults to False.
+            timeout_seconds (Optional[int]):
+                Request timeout in seconds. Defaults to session's `timeout_seconds`.
+            proxy (Optional[dict]):
+                Proxy settings as a dict. For example:
+                {
+                    "http": "http://user:pass@ip:port",
+                    "https": "http://user:pass@ip:port"
+                }
+
+        Returns:
+            Response: The response object.
+
+        Raises:
+            TLSClientExeption: If the underlying Go client returns a status code of 0 (error).
+        """
         def build_payload():
-            # --- URL ------------------------------------------------------------------------------------------------------
             # Prepare URL - add params to url
             final_url = url
             if params is not None:
                 final_url = f"{url}?{urllib.parse.urlencode(params, doseq=True)}"
 
-            # --- Request Body ---------------------------------------------------------------------------------------------
-            # Prepare request body - build request body
-            # Data has priority. JSON is only used if data is None.
+            # Prepare request body
             if data is None and json is not None:
                 if isinstance(json, (dict, list)):
                     json_data = dumps(json)
@@ -350,11 +385,10 @@ class AsyncSession:
             else:
                 request_body = data
                 content_type = None
-            # set content type if it isn't set
+
             if content_type is not None and "content-type" not in self.headers:
                 self.headers["Content-Type"] = content_type
 
-            # --- Headers --------------------------------------------------------------------------------------------------
             if self.headers is None:
                 merged_headers = CaseInsensitiveDict(headers)
             elif headers is None:
@@ -363,34 +397,32 @@ class AsyncSession:
                 merged_headers = CaseInsensitiveDict(self.headers)
                 merged_headers.update(headers)
 
-                # Remove items, where the key or value is set to None.
+                # Remove items where the key or value is set to None.
                 none_keys = [k for (k, v) in merged_headers.items() if v is None or k is None]
                 for key in none_keys:
                     del merged_headers[key]
 
-            # --- Cookies --------------------------------------------------------------------------------------------------
             merged_cookies = merge_cookies(self.cookies, cookies or {})
-            # turn cookie jar into dict
-            # in the cookie value the " gets removed, because the fhttp library in golang doesn't accept the character
             request_cookies = [
-                {'domain': c.domain, 'expires': c.expires, 'name': c.name, 'path': c.path, 'value': c.value.replace('"', "")}
+                {
+                    'domain': c.domain,
+                    'expires': c.expires,
+                    'name': c.name,
+                    'path': c.path,
+                    'value': c.value.replace('"', "")
+                }
                 for c in merged_cookies
             ]
 
-            # --- Proxy ----------------------------------------------------------------------------------------------------
             final_proxy = ""
             if isinstance(proxy, dict) and "http" in proxy:
                 final_proxy = proxy["http"]
             elif isinstance(proxy, str):
                 final_proxy = proxy
 
-            # --- Timeout --------------------------------------------------------------------------------------------------
             final_timeout_seconds = timeout_seconds or self.timeout_seconds
-
-            # --- Certificate pinning --------------------------------------------------------------------------------------
             final_certificate_pinning = self.certificate_pinning
 
-            # --- Request --------------------------------------------------------------------------------------------------
             is_byte_request = isinstance(request_body, (bytes, bytearray))
             payload = {
                 "sessionId": self._session_id,
@@ -412,6 +444,8 @@ class AsyncSession:
             }
             if final_certificate_pinning:
                 payload["certificatePinningHosts"] = final_certificate_pinning
+
+            # If no predefined client_identifier, we use custom TLS settings
             if self.client_identifier is None:
                 payload["customTlsClient"] = {
                     "ja3String": self.ja3_string,
@@ -436,57 +470,70 @@ class AsyncSession:
         payload = build_payload()
 
         def make_request():
-            # this is a pointer to the response
+            # This is a pointer to the response
             return request(dumps(payload).encode('utf-8'))
 
-        # Execute the request in a separate thread
         response = await asyncio.to_thread(make_request)
 
-        # dereference the pointer to a byte array
         response_bytes = ctypes.string_at(response)
-        # convert our byte array to a string (tls client returns json)
         response_string = response_bytes.decode('utf-8')
-        # convert response string to json
         response_object = loads(response_string)
-        # free the memory
         await asyncio.to_thread(freeMemory, response_object['id'].encode('utf-8'))
 
-        # --- Response -------------------------------------------------------------------------------------------------
-        # Error handling
         if response_object["status"] == 0:
             raise TLSClientExeption(response_object["body"])
-        # Set response cookies
+
         response_cookie_jar = extract_cookies_to_jar(
             request_url=url,
             request_headers=payload["headers"],
             cookie_jar=self.cookies,
             response_headers=response_object["headers"]
         )
-        # build response class
         return build_response(response_object, response_cookie_jar)
 
-    async def get(
-        self,
-        url: str,
-        **kwargs: Any
-    ) -> Response:
-        """Sends a GET request"""
+    async def get(self, url: str, **kwargs: Any) -> Response:
+        """
+        Sends an asynchronous GET request.
+
+        Args:
+            url (str):
+                The request URL.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="GET", url=url, **kwargs)
 
-    async def options(
-        self,
-        url: str,
-        **kwargs: Any
-    ) -> Response:
-        """Sends an OPTIONS request"""
+    async def options(self, url: str, **kwargs: Any) -> Response:
+        """
+        Sends an asynchronous OPTIONS request.
+
+        Args:
+            url (str):
+                The request URL.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="OPTIONS", url=url, **kwargs)
 
-    async def head(
-        self,
-        url: str,
-        **kwargs: Any
-    ) -> Response:
-        """Sends a HEAD request"""
+    async def head(self, url: str, **kwargs: Any) -> Response:
+        """
+        Sends an asynchronous HEAD request.
+
+        Args:
+            url (str):
+                The request URL.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="HEAD", url=url, **kwargs)
 
     async def post(
@@ -496,7 +543,22 @@ class AsyncSession:
         json: Optional[dict] = None,
         **kwargs: Any
     ) -> Response:
-        """Sends a POST request"""
+        """
+        Sends an asynchronous POST request.
+
+        Args:
+            url (str):
+                The request URL.
+            data (Optional[Union[str, dict]]):
+                The request body for form data or raw string/bytes. Priority is given to `data` over `json`.
+            json (Optional[dict]):
+                JSON body if `data` is not provided. If it's a dict or list, it will be JSON-encoded automatically.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="POST", url=url, data=data, json=json, **kwargs)
 
     async def put(
@@ -506,7 +568,22 @@ class AsyncSession:
         json: Optional[dict] = None,
         **kwargs: Any
     ) -> Response:
-        """Sends a PUT request"""
+        """
+        Sends an asynchronous PUT request.
+
+        Args:
+            url (str):
+                The request URL.
+            data (Optional[Union[str, dict]]):
+                The request body for form data or raw string/bytes. Priority is given to `data` over `json`.
+            json (Optional[dict]):
+                JSON body if `data` is not provided. If it's a dict or list, it will be JSON-encoded automatically.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="PUT", url=url, data=data, json=json, **kwargs)
 
     async def patch(
@@ -516,13 +593,35 @@ class AsyncSession:
         json: Optional[dict] = None,
         **kwargs: Any
     ) -> Response:
-        """Sends a PATCH request"""
+        """
+        Sends an asynchronous PATCH request.
+
+        Args:
+            url (str):
+                The request URL.
+            data (Optional[Union[str, dict]]):
+                The request body for form data or raw string/bytes. Priority is given to `data` over `json`.
+            json (Optional[dict]):
+                JSON body if `data` is not provided. If it's a dict or list, it will be JSON-encoded automatically.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="PATCH", url=url, data=data, json=json, **kwargs)
 
-    async def delete(
-        self,
-        url: str,
-        **kwargs: Any
-    ) -> Response:
-        """Sends a DELETE request"""
+    async def delete(self, url: str, **kwargs: Any) -> Response:
+        """
+        Sends an asynchronous DELETE request.
+
+        Args:
+            url (str):
+                The request URL.
+            **kwargs (Any):
+                Additional arguments to be passed to `execute_request`.
+
+        Returns:
+            Response: The response object.
+        """
         return await self.execute_request(method="DELETE", url=url, **kwargs)
