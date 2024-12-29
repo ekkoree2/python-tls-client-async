@@ -17,7 +17,6 @@ else:
 
 root_dir = os.path.abspath(os.path.dirname(__file__))
 binary_filepath = os.path.join(root_dir, 'dependencies', f'tls-client{file_ext}')
-print(binary_filepath)
 library = ctypes.cdll.LoadLibrary(binary_filepath)
 
 # extract the exposed request function from the shared package
