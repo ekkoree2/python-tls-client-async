@@ -386,30 +386,30 @@ class AsyncSession:
                 request_body = data
                 content_type = None
 
-            if content_type is not None and "content-type" not in self.headers:
-                self.headers["Content-Type"] = content_type
+            # Create a copy of the session headers to avoid modifying the original
+            merged_headers = CaseInsensitiveDict(self.headers.copy())
 
-            if self.headers is None:
-                merged_headers = CaseInsensitiveDict(headers)
-            elif headers is None:
-                merged_headers = self.headers
-            else:
-                merged_headers = CaseInsensitiveDict(self.headers)
+            # Set Content-Type header if applicable
+            if content_type is not None and "content-type" not in merged_headers:
+                merged_headers["Content-Type"] = content_type
+
+            # Merge headers from the session and the request
+            if headers is not None:
                 merged_headers.update(headers)
-
-                # Remove items where the key or value is set to None.
+                # Remove keys with None values
                 none_keys = [k for (k, v) in merged_headers.items() if v is None or k is None]
                 for key in none_keys:
                     del merged_headers[key]
 
+            # Merge cookies from the session and the request
             merged_cookies = merge_cookies(self.cookies, cookies or {})
             request_cookies = [
                 {
-                    'domain': c.domain,
-                    'expires': c.expires,
-                    'name': c.name,
-                    'path': c.path,
-                    'value': c.value.replace('"', "")
+                    "domain": c.domain,
+                    "expires": c.expires,
+                    "name": c.name,
+                    "path": c.path,
+                    "value": c.value.replace('"', "")
                 }
                 for c in merged_cookies
             ]
