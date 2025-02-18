@@ -4,6 +4,10 @@ Python-TLS-Client-Async is a fork of [Python-TLS-Client](https://github.com/Flor
 support for asyncio. This library allows you to perform advanced HTTP requests while maintaining compatibility with
 asynchronous programming patterns in Python.
 
+The fork was created due to the lack of updates in the original repository, while the underlying GoLang
+library [tls-client](https://github.com/bogdanfinn/tls-client) continues to evolve actively. This project aims to keep
+up with the latest developments in the GoLang library and provide a modern, asynchronous interface for Python users.
+
 # Installation
 
 ```bash
