@@ -313,6 +313,7 @@ class AsyncSession:
 
         return destroy_session_response_string
 
+    
     async def execute_request(
         self,
         method: str,
@@ -325,7 +326,7 @@ class AsyncSession:
         allow_redirects: Optional[bool] = False,
         insecure_skip_verify: Optional[bool] = False,
         timeout_seconds: Optional[int] = None,
-        proxy: Optional[dict] = None
+        proxy: Optional[Union[dict, str]] = None
     ) -> Response:
         """
         Executes an HTTP request using the Go-based TLS client in a separate thread.
@@ -339,25 +340,26 @@ class AsyncSession:
                 Querystring parameters to be appended to the URL.
                 If values are lists, they represent multiple values for the same key.
             data (Optional[Union[str, dict]]):
-                The request body for form data or raw string/bytes. Priority is given to `data` over `json`.
+                The request body for form data or raw string/bytes. Priority is given to data over json.
             headers (Optional[dict]):
                 Additional headers to merge with the session's default headers.
             cookies (Optional[dict]):
                 Cookies to merge with the session's cookies.
             json (Optional[dict]):
-                JSON body if `data` is not provided. If it's a dict or list, it will be JSON-encoded automatically.
+                JSON body if data is not provided. If it's a dict or list, it will be JSON-encoded automatically.
             allow_redirects (Optional[bool]):
                 Whether to follow redirects. Defaults to False.
             insecure_skip_verify (Optional[bool]):
                 Whether to skip TLS certificate verification. Defaults to False.
             timeout_seconds (Optional[int]):
-                Request timeout in seconds. Defaults to session's `timeout_seconds`.
-            proxy (Optional[dict]):
-                Proxy settings as a dict. For example:
+                Request timeout in seconds. Defaults to session's timeout_seconds.
+            proxy (Optional[Union[dict, str]]):
+                Proxy settings as a dict or string. Overrides session proxies. For example:
                 {
                     "http": "http://user:pass@ip:port",
                     "https": "http://user:pass@ip:port"
                 }
+                Or directly as string: "http://user:pass@ip:port"
 
         Returns:
             Response: The response object.
@@ -366,12 +368,10 @@ class AsyncSession:
             TLSClientExeption: If the underlying Go client returns a status code of 0 (error).
         """
         def build_payload():
-            # Prepare URL - add params to url
             final_url = url
             if params is not None:
                 final_url = f"{url}?{urllib.parse.urlencode(params, doseq=True)}"
 
-            # Prepare request body
             if data is None and json is not None:
                 if isinstance(json, (dict, list)):
                     json_data = dumps(json)
@@ -386,22 +386,17 @@ class AsyncSession:
                 request_body = data
                 content_type = None
 
-            # Create a copy of the session headers to avoid modifying the original
             merged_headers = CaseInsensitiveDict(self.headers.copy())
 
-            # Set Content-Type header if applicable
             if content_type is not None and "content-type" not in merged_headers:
                 merged_headers["Content-Type"] = content_type
 
-            # Merge headers from the session and the request
             if headers is not None:
                 merged_headers.update(headers)
-                # Remove keys with None values
                 none_keys = [k for (k, v) in merged_headers.items() if v is None or k is None]
                 for key in none_keys:
                     del merged_headers[key]
 
-            # Merge cookies from the session and the request
             merged_cookies = merge_cookies(self.cookies, cookies or {})
             request_cookies = [
                 {
@@ -415,10 +410,19 @@ class AsyncSession:
             ]
 
             final_proxy = ""
-            if isinstance(proxy, dict) and "http" in proxy:
-                final_proxy = proxy["http"]
-            elif isinstance(proxy, str):
-                final_proxy = proxy
+            if proxy:
+                if isinstance(proxy, dict):
+                    url_scheme = urllib.parse.urlparse(url).scheme
+                    proxy_key = url_scheme if url_scheme in proxy else "http"
+                    if proxy_key in proxy:
+                        final_proxy = proxy[proxy_key]
+                elif isinstance(proxy, str):
+                    final_proxy = proxy
+            elif self.proxies:
+                url_scheme = urllib.parse.urlparse(url).scheme
+                proxy_key = url_scheme if url_scheme in self.proxies else "http"
+                if proxy_key in self.proxies:
+                    final_proxy = self.proxies[proxy_key]
 
             final_timeout_seconds = timeout_seconds or self.timeout_seconds
             final_certificate_pinning = self.certificate_pinning
@@ -444,8 +448,6 @@ class AsyncSession:
             }
             if final_certificate_pinning:
                 payload["certificatePinningHosts"] = final_certificate_pinning
-
-            # If no predefined client_identifier, we use custom TLS settings
             if self.client_identifier is None:
                 payload["customTlsClient"] = {
                     "ja3String": self.ja3_string,
